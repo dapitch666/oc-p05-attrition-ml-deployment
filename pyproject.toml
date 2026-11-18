@@ -1,7 +1,7 @@
 [project]
 name = "oc-p05-attrition-ml-deployment"
 version = "0.1.0"
-description = "Add your description here"
+description = "Deploy an employee attrition model (CatBoost) behind a FastAPI API with PostgreSQL, Docker Compose and CI/CD"
 readme = "README.md"
 authors = [
     { name = "Anne Delpla", email = "dapitch666@gmail.com" }
@@ -15,3 +15,16 @@ oc-p05-attrition-ml-deployment = "oc_p05_attrition_ml_deployment:main"
 [build-system]
 requires = ["uv_build>=0.13.1,<0.14.0"]
 build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.7.0",
+    "ruff>=0.17.5",
+]
