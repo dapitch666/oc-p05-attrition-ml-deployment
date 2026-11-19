@@ -1,0 +1,56 @@
+{
+  "model_version": "1.0.0",
+  "threshold": 0.2524600136446524,
+  "catboost_params": {
+    "auto_class_weights": "SqrtBalanced",
+    "depth": 3,
+    "iterations": 978,
+    "l2_leaf_reg": 3.1900416724175513,
+    "learning_rate": 0.01471005003927122
+  },
+  "random_state": 42,
+  "test_size": 0.2,
+  "pipeline_columns": [
+    "age",
+    "revenu_mensuel",
+    "nombre_experiences_precedentes",
+    "annees_experience_totale",
+    "annees_dans_l_entreprise",
+    "satisfaction_employee_environnement",
+    "note_evaluation_precedente",
+    "satisfaction_employee_nature_travail",
+    "satisfaction_employee_equipe",
+    "satisfaction_employee_equilibre_pro_perso",
+    "augmentation_salaire_precedente",
+    "nombre_participation_pee",
+    "nb_formations_suivies",
+    "distance_domicile_travail",
+    "niveau_education",
+    "annees_sous_responsable_actuel",
+    "satisfaction_lows",
+    "career_share_in_company",
+    "role_share_of_tenure",
+    "promotion_wait_share",
+    "years_per_employer",
+    "frequence_deplacement",
+    "genre",
+    "heures_supplementaires",
+    "statut_marital",
+    "poste",
+    "domaine_etude"
+  ],
+  "versions": {
+    "python": "3.12.15",
+    "scikit-learn": "1.9.1",
+    "catboost": "1.2.10",
+    "pandas": "3.1.1",
+    "numpy": "2.5.5"
+  },
+  "test_metrics": {
+    "pr_auc": 0.52,
+    "precision": 0.378,
+    "recall": 0.723,
+    "leavers_found": 34,
+    "leavers_total": 47
+  }
+}
