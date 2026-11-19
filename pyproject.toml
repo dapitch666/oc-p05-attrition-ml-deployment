@@ -26,5 +26,15 @@ select = ["E", "F", "I", "UP", "B"]
 [dependency-groups]
 dev = [
     "pre-commit>=4.7.0",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
     "ruff>=0.17.5",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.coverage.run]
+source = ["oc_p05_attrition_ml_deployment"]
+branch = true
