@@ -11,6 +11,8 @@ import pandas as pd
 from fastapi import FastAPI, Request
 from sklearn.pipeline import Pipeline
 
+from oc_p05_attrition_ml_deployment import models  # noqa: F401  # registers the tables
+from oc_p05_attrition_ml_deployment.db import create_tables, get_engine
 from oc_p05_attrition_ml_deployment.features import build_inputs
 from oc_p05_attrition_ml_deployment.schemas import EmployeeInput, PredictionOutput
 
@@ -46,8 +48,9 @@ def load_model(model_dir: Path) -> LoadedModel:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    """Load the model once, before the first request."""
+    """Load the model and create the tables once, before the first request."""
     app.state.model = load_model(Path(os.environ.get("MODEL_DIR", DEFAULT_MODEL_DIR)))
+    create_tables(get_engine())
     yield
 
 
