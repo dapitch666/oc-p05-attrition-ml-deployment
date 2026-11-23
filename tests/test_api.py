@@ -8,8 +8,13 @@ from typing import get_args
 import joblib
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 
 from oc_p05_attrition_ml_deployment.api import app
+from oc_p05_attrition_ml_deployment.db import get_engine, get_session
+from oc_p05_attrition_ml_deployment.models import PredictionLog
 from oc_p05_attrition_ml_deployment.schemas import EmployeeInput
 
 MODEL_DIR = Path(__file__).parent.parent / "models"
@@ -146,3 +151,47 @@ def test_startup_fails_when_model_dir_is_missing(monkeypatch, tmp_path):
     with pytest.raises(FileNotFoundError, match="MODEL_DIR"):
         with TestClient(app):
             pass
+
+
+def stored_logs() -> list[PredictionLog]:
+    with Session(get_engine()) as session:
+        return list(session.scalars(select(PredictionLog)))
+
+
+class FailingSession(Session):
+    def commit(self) -> None:
+        raise OperationalError("INSERT", {}, Exception("database down"))
+
+
+def test_predict_stores_one_log_with_the_response_values(client):
+    body = client.post("/predict", json=VALID_EMPLOYEE).json()
+
+    [log] = stored_logs()
+    assert log.inputs == VALID_EMPLOYEE
+    assert log.score == pytest.approx(body["score"])
+    assert log.alert == body["alert"]
+    assert log.model_version == body["model_version"]
+
+
+def test_predict_still_answers_when_the_database_write_fails(client, monkeypatch, caplog):
+    expected = client.post("/predict", json=VALID_EMPLOYEE)
+
+    def failing_session():
+        with FailingSession(get_engine()) as session:
+            yield session
+
+    monkeypatch.setitem(app.dependency_overrides, get_session, failing_session)
+    with caplog.at_level("ERROR"):
+        response = client.post("/predict", json=VALID_EMPLOYEE)
+
+    assert response.status_code == 200
+    assert response.json() == expected.json()
+    assert "Could not store the prediction log" in caplog.text
+    assert len(stored_logs()) == 1
+
+
+def test_invalid_request_stores_nothing(client):
+    response = client.post("/predict", json={**VALID_EMPLOYEE, "age": 17})
+
+    assert response.status_code == 422
+    assert stored_logs() == []
