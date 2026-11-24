@@ -57,3 +57,15 @@ class ModelOutput(Base):
     model_version: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     input: Mapped[ModelInput] = relationship(back_populates="output")
+
+
+class Employee(EmployeeFields, Base):
+    """One employee of the project 4 dataset, with the outcome observed."""
+
+    __tablename__ = "employees"
+
+    id_employee: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    departement: Mapped[str]
+    niveau_hierarchique_poste: Mapped[int] = mapped_column(SmallInteger)
+    note_evaluation_actuelle: Mapped[int] = mapped_column(SmallInteger)
+    a_quitte_l_entreprise: Mapped[bool]
