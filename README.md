@@ -52,6 +52,25 @@ publishes it to `ghcr.io/dapitch666/oc-p05-attrition-ml-deployment`, tagged with
 version. It fails when the tag differs from the version in `pyproject.toml` or when the
 tagged commit is not on `main`. Run manually, it builds the image without pushing.
 
+To run the published image instead of building it, write a Compose override, for example
+`docker-compose.ghcr.yml`:
+
+```yaml
+services:
+  api:
+    image: ghcr.io/dapitch666/oc-p05-attrition-ml-deployment:0.4.0
+    pull_policy: always
+```
+
+Then start the stack with the override and without building:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d --no-build api
+```
+
+The image is public, so no login is needed. Version 0.4.0 was pulled and run this way,
+and the `/health` and `/predict` endpoints were checked.
+
 ## Project tree
 
 ```text
