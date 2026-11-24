@@ -2,6 +2,7 @@ import json
 import re
 from collections.abc import Iterator
 from dataclasses import replace
+from importlib.metadata import version
 from pathlib import Path
 from typing import get_args
 from unittest.mock import Mock
@@ -52,6 +53,12 @@ VALID_EMPLOYEE = {
 def client() -> Iterator[TestClient]:
     with TestClient(app) as client:
         yield client
+
+
+def test_api_version_comes_from_package_metadata(client):
+    expected = version("oc-p05-attrition-ml-deployment")
+    assert app.version == expected
+    assert client.get("/openapi.json").json()["info"]["version"] == expected
 
 
 def test_health_returns_ok(client):

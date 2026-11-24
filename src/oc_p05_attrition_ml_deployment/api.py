@@ -5,6 +5,7 @@ import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated
 
@@ -65,7 +66,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 app = FastAPI(
     title="Futurisys attrition API",
     description="API serving the employee attrition classifier.",
-    version="0.1.0",
+    version=version("oc-p05-attrition-ml-deployment"),
     lifespan=lifespan,
 )
 
