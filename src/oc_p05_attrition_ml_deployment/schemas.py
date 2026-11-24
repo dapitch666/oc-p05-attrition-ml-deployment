@@ -9,7 +9,7 @@ class EmployeeInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     age: int = Field(ge=18, le=70, description="Age in years.", examples=[35])
-    revenu_mensuel: int = Field(gt=0, description="Monthly income.", examples=[5000])
+    revenu_mensuel: int = Field(gt=0, le=100_000, description="Monthly income.", examples=[5000])
     nombre_experiences_precedentes: int = Field(
         ge=0, le=20, description="Number of employers before the current one.", examples=[2]
     )

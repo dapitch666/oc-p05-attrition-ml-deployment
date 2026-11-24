@@ -4,12 +4,18 @@ from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import get_args
+from unittest.mock import Mock
 
 import joblib
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import insert, select
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 
 from oc_p05_attrition_ml_deployment.api import app
+from oc_p05_attrition_ml_deployment.db import get_engine, get_session
+from oc_p05_attrition_ml_deployment.models import ModelInput, ModelOutput
 from oc_p05_attrition_ml_deployment.schemas import EmployeeInput
 
 MODEL_DIR = Path(__file__).parent.parent / "models"
@@ -80,6 +86,7 @@ def test_predict_alert_follows_threshold(client):
     [
         {"age": "thirty"},
         {"age": 17},
+        {"revenu_mensuel": 100_001},
         {"satisfaction_employee_equipe": 5},
         {"augmentation_salaire_precedente": 101},
         {"poste": "Astronaute"},
@@ -146,3 +153,135 @@ def test_startup_fails_when_model_dir_is_missing(monkeypatch, tmp_path):
     with pytest.raises(FileNotFoundError, match="MODEL_DIR"):
         with TestClient(app):
             pass
+
+
+def test_revenu_mensuel_at_the_upper_bound_is_accepted(client):
+    response = client.post("/predict", json={**VALID_EMPLOYEE, "revenu_mensuel": 100_000})
+
+    assert response.status_code == 200
+
+
+def stored_inputs() -> list[ModelInput]:
+    with Session(get_engine()) as session:
+        return list(session.scalars(select(ModelInput)))
+
+
+def stored_outputs() -> list[ModelOutput]:
+    with Session(get_engine()) as session:
+        return list(session.scalars(select(ModelOutput)))
+
+
+def break_database(monkeypatch, *, on_flush=False, on_commit=None):
+    """Make the API sessions fail on flush, or on the n-th commit."""
+
+    class BrokenSession(Session):
+        commits = 0
+
+        def flush(self, objects=None):
+            if on_flush:
+                raise OperationalError("INSERT", {}, Exception("database down"))
+            super().flush(objects)
+
+        def commit(self):
+            self.commits += 1
+            if self.commits == on_commit:
+                raise OperationalError("INSERT", {}, Exception("database down"))
+            super().commit()
+
+    def broken_session():
+        with BrokenSession(get_engine()) as session:
+            yield session
+
+    monkeypatch.setitem(app.dependency_overrides, get_session, broken_session)
+
+
+def test_predict_stores_the_input_and_its_linked_output(client):
+    body = client.post("/predict", json=VALID_EMPLOYEE).json()
+
+    [stored_input] = stored_inputs()
+    [stored_output] = stored_outputs()
+    for field, value in VALID_EMPLOYEE.items():
+        assert getattr(stored_input, field) == value
+    assert stored_output.input_id == stored_input.id
+    assert stored_output.score == pytest.approx(body["score"])
+    assert stored_output.alert == body["alert"]
+    assert stored_output.model_version == body["model_version"]
+
+
+def test_database_failure_on_the_input_gives_503_and_skips_the_model(client, monkeypatch):
+    pipeline = Mock()
+    monkeypatch.setattr(app.state, "model", replace(app.state.model, pipeline=pipeline))
+    break_database(monkeypatch, on_flush=True)
+
+    response = client.post("/predict", json=VALID_EMPLOYEE)
+
+    assert response.status_code == 503
+    assert "score" not in response.json()
+    pipeline.predict_proba.assert_not_called()
+    assert stored_inputs() == []
+    assert stored_outputs() == []
+
+
+def test_database_failure_on_the_output_gives_503_and_keeps_the_input(client, monkeypatch):
+    break_database(monkeypatch, on_commit=2)
+
+    response = client.post("/predict", json=VALID_EMPLOYEE)
+
+    assert response.status_code == 503
+    assert "score" not in response.json()
+    assert len(stored_inputs()) == 1
+    assert stored_outputs() == []
+
+
+def test_model_failure_keeps_the_input_without_output(monkeypatch):
+    pipeline = Mock()
+    pipeline.predict_proba.side_effect = RuntimeError("model failure")
+    with TestClient(app, raise_server_exceptions=False) as client:
+        monkeypatch.setattr(app.state, "model", replace(app.state.model, pipeline=pipeline))
+        response = client.post("/predict", json=VALID_EMPLOYEE)
+
+    assert response.status_code == 500
+    assert len(stored_inputs()) == 1
+    assert stored_outputs() == []
+
+
+def test_invalid_request_stores_nothing(client):
+    response = client.post("/predict", json={**VALID_EMPLOYEE, "age": 17})
+
+    assert response.status_code == 422
+    assert stored_inputs() == []
+    assert stored_outputs() == []
+
+
+def test_failed_write_does_not_log_employee_values(client, monkeypatch, caplog):
+    payload = {
+        **VALID_EMPLOYEE,
+        "revenu_mensuel": 4321,
+        "statut_marital": "Divorcé(e)",
+        "poste": "Tech Lead",
+    }
+
+    class FailingInsertSession(Session):
+        def flush(self, objects=None):
+            # A real database error (smallint overflow): its message lists the statement parameters.
+            self.connection().execute(
+                insert(ModelInput).values(
+                    age=70_000,
+                    revenu_mensuel=payload["revenu_mensuel"],
+                    statut_marital=payload["statut_marital"],
+                    poste=payload["poste"],
+                )
+            )
+
+    def failing_session():
+        with FailingInsertSession(get_engine()) as session:
+            yield session
+
+    monkeypatch.setitem(app.dependency_overrides, get_session, failing_session)
+    with caplog.at_level("ERROR"):
+        response = client.post("/predict", json=payload)
+
+    assert response.status_code == 503
+    assert "Could not store the model input" in caplog.text
+    for value in ("4321", "Divorcé(e)", "Tech Lead"):
+        assert value not in caplog.text

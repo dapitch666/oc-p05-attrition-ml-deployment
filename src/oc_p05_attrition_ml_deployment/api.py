@@ -1,22 +1,32 @@
 import hashlib
 import json
+import logging
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
 
 import joblib
 import pandas as pd
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from sklearn.pipeline import Pipeline
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
+from oc_p05_attrition_ml_deployment.db import create_tables, get_engine, get_session
 from oc_p05_attrition_ml_deployment.features import build_inputs
+from oc_p05_attrition_ml_deployment.models import ModelInput, ModelOutput
 from oc_p05_attrition_ml_deployment.schemas import EmployeeInput, PredictionOutput
 
 DEFAULT_MODEL_DIR = "models/"
 PIPELINE_FILE = "attrition_pipeline.joblib"
 METADATA_FILE = "attrition_metadata.json"
+
+DATABASE_UNAVAILABLE = "The database is unavailable, so no prediction can be made."
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -46,8 +56,9 @@ def load_model(model_dir: Path) -> LoadedModel:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    """Load the model once, before the first request."""
+    """Load the model and create the tables once, before the first request."""
     app.state.model = load_model(Path(os.environ.get("MODEL_DIR", DEFAULT_MODEL_DIR)))
+    create_tables(get_engine())
     yield
 
 
@@ -65,19 +76,68 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/predict")
-def predict(employee: EmployeeInput, request: Request) -> PredictionOutput:
+def store_input(session: Session, employee: EmployeeInput) -> int:
+    """Commit the raw input and return its id; answer 503 if the database fails."""
+    try:
+        record = ModelInput(**employee.model_dump())
+        session.add(record)
+        # Read the id before the commit, which expires the object.
+        session.flush()
+        input_id = record.id
+        session.commit()
+    except SQLAlchemyError as error:
+        logger.exception("Could not store the model input")
+        raise HTTPException(status_code=503, detail=DATABASE_UNAVAILABLE) from error
+    return input_id
+
+
+def store_output(session: Session, input_id: int, output: PredictionOutput) -> None:
+    """Commit the output linked to its input; answer 503 if the database fails."""
+    try:
+        session.add(
+            ModelOutput(
+                input_id=input_id,
+                score=output.score,
+                alert=output.alert,
+                model_version=output.model_version,
+            )
+        )
+        session.commit()
+    except SQLAlchemyError as error:
+        logger.exception("Could not store the model output")
+        raise HTTPException(status_code=503, detail=DATABASE_UNAVAILABLE) from error
+
+
+@app.post(
+    "/predict",
+    responses={
+        503: {"description": "The database is unavailable: no prediction is made or returned."}
+    },
+)
+def predict(
+    employee: EmployeeInput,
+    request: Request,
+    session: Annotated[Session, Depends(get_session)],
+) -> PredictionOutput:
     """Predict the attrition risk of one employee.
 
     Takes the raw employee fields and returns a model score between 0 and 1, an alert flag
     (true when the score is at or above the alert threshold stored with the model)
     and the version of the model that answered. Invalid fields give a 422 response.
+
+    Every call goes through the database: the input is stored before the model runs and
+    the output is stored before the answer is returned. If the database is unavailable,
+    the response is a 503 and no prediction is returned. An input whose output could not
+    be produced or stored stays in the database without an output.
     """
     model: LoadedModel = request.app.state.model
+    input_id = store_input(session, employee)
     inputs = build_inputs(pd.DataFrame([employee.model_dump()]))
     probability = float(model.pipeline.predict_proba(inputs)[0, 1])
-    return PredictionOutput(
+    output = PredictionOutput(
         score=probability,
         alert=probability >= model.threshold,
         model_version=model.version,
     )
+    store_output(session, input_id, output)
+    return output
