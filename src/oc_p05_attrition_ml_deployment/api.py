@@ -10,19 +10,21 @@ from typing import Annotated
 
 import joblib
 import pandas as pd
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from sklearn.pipeline import Pipeline
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from oc_p05_attrition_ml_deployment.db import create_tables, get_engine, get_session
 from oc_p05_attrition_ml_deployment.features import build_inputs
-from oc_p05_attrition_ml_deployment.models import PredictionLog
+from oc_p05_attrition_ml_deployment.models import ModelInput, ModelOutput
 from oc_p05_attrition_ml_deployment.schemas import EmployeeInput, PredictionOutput
 
 DEFAULT_MODEL_DIR = "models/"
 PIPELINE_FILE = "attrition_pipeline.joblib"
 METADATA_FILE = "attrition_metadata.json"
+
+DATABASE_UNAVAILABLE = "The database is unavailable, so no prediction can be made."
 
 logger = logging.getLogger(__name__)
 
@@ -74,24 +76,44 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def log_prediction(session: Session, employee: EmployeeInput, output: PredictionOutput) -> None:
-    """Store one prediction; a failed write is logged and never breaks the response."""
+def store_input(session: Session, employee: EmployeeInput) -> int:
+    """Commit the raw input and return its id; answer 503 if the database fails."""
+    try:
+        record = ModelInput(**employee.model_dump())
+        session.add(record)
+        # Read the id before the commit, which expires the object.
+        session.flush()
+        input_id = record.id
+        session.commit()
+    except SQLAlchemyError as error:
+        logger.exception("Could not store the model input")
+        raise HTTPException(status_code=503, detail=DATABASE_UNAVAILABLE) from error
+    return input_id
+
+
+def store_output(session: Session, input_id: int, output: PredictionOutput) -> None:
+    """Commit the output linked to its input; answer 503 if the database fails."""
     try:
         session.add(
-            PredictionLog(
-                model_version=output.model_version,
-                inputs=employee.model_dump(mode="json"),
+            ModelOutput(
+                input_id=input_id,
                 score=output.score,
                 alert=output.alert,
+                model_version=output.model_version,
             )
         )
         session.commit()
-    except SQLAlchemyError:
-        # No rollback here: get_session closes the session, which ends the transaction.
-        logger.exception("Could not store the prediction log")
+    except SQLAlchemyError as error:
+        logger.exception("Could not store the model output")
+        raise HTTPException(status_code=503, detail=DATABASE_UNAVAILABLE) from error
 
 
-@app.post("/predict")
+@app.post(
+    "/predict",
+    responses={
+        503: {"description": "The database is unavailable: no prediction is made or returned."}
+    },
+)
 def predict(
     employee: EmployeeInput,
     request: Request,
@@ -102,10 +124,14 @@ def predict(
     Takes the raw employee fields and returns a model score between 0 and 1, an alert flag
     (true when the score is at or above the alert threshold stored with the model)
     and the version of the model that answered. Invalid fields give a 422 response.
-    Each successful prediction is stored in the database; if the write fails, the
-    prediction is still returned and the error is logged.
+
+    Every call goes through the database: the input is stored before the model runs and
+    the output is stored before the answer is returned. If the database is unavailable,
+    the response is a 503 and no prediction is returned. An input whose output could not
+    be produced or stored stays in the database without an output.
     """
     model: LoadedModel = request.app.state.model
+    input_id = store_input(session, employee)
     inputs = build_inputs(pd.DataFrame([employee.model_dump()]))
     probability = float(model.pipeline.predict_proba(inputs)[0, 1])
     output = PredictionOutput(
@@ -113,5 +139,5 @@ def predict(
         alert=probability >= model.threshold,
         model_version=model.version,
     )
-    log_prediction(session, employee, output)
+    store_output(session, input_id, output)
     return output

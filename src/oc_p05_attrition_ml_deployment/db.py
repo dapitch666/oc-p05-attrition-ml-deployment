@@ -5,6 +5,8 @@ from functools import lru_cache
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import DeclarativeBase, Session
 
+CONNECT_TIMEOUT_SECONDS = 3
+
 
 class Base(DeclarativeBase):
     """Declarative base of the ORM models."""
@@ -16,7 +18,14 @@ def get_engine() -> Engine:
     url = os.environ.get("DATABASE_URL")
     if not url:
         raise RuntimeError("DATABASE_URL is not set.")
-    return create_engine(url, pool_pre_ping=True)
+    return create_engine(
+        url,
+        pool_pre_ping=True,
+        # Keep the employee fields out of the logs: error messages would list the parameters.
+        hide_parameters=True,
+        # Fail fast when PostgreSQL is unreachable, so the API can answer 503 quickly.
+        connect_args={"connect_timeout": CONNECT_TIMEOUT_SECONDS},
+    )
 
 
 def create_tables(engine: Engine) -> None:

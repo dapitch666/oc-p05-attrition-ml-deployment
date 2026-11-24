@@ -43,14 +43,14 @@ def test_database() -> Iterator[None]:
         get_engine.cache_clear()
 
 
-def truncate_prediction_logs() -> None:
+def truncate_model_tables() -> None:
     with get_engine().begin() as connection:
-        connection.execute(text("TRUNCATE prediction_logs RESTART IDENTITY"))
+        connection.execute(text("TRUNCATE model_outputs, model_inputs RESTART IDENTITY"))
 
 
 @pytest.fixture(autouse=True)
-def empty_prediction_logs(test_database: None) -> Iterator[None]:
-    """Leave prediction_logs empty before and after each test."""
-    truncate_prediction_logs()
+def empty_model_tables(test_database: None) -> Iterator[None]:
+    """Leave the model tables empty before and after each test."""
+    truncate_model_tables()
     yield
-    truncate_prediction_logs()
+    truncate_model_tables()
