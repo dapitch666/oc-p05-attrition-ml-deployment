@@ -12,13 +12,13 @@ from oc_p05_attrition_ml_deployment.auth import (
     hash_key,
     revoke_api_key,
 )
-from oc_p05_attrition_ml_deployment.db import get_engine
+from oc_p05_attrition_ml_deployment.db import get_admin_engine
 from oc_p05_attrition_ml_deployment.models import ApiKey
 
 
 @pytest.fixture
 def session():
-    with Session(get_engine()) as session:
+    with Session(get_admin_engine()) as session:
         yield session
 
 

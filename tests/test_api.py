@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from oc_p05_attrition_ml_deployment.api import app
 from oc_p05_attrition_ml_deployment.auth import create_api_key, hash_key, revoke_api_key
-from oc_p05_attrition_ml_deployment.db import get_engine, get_session
+from oc_p05_attrition_ml_deployment.db import get_admin_engine, get_engine, get_session
 from oc_p05_attrition_ml_deployment.models import ApiKey, ModelInput, ModelOutput
 from oc_p05_attrition_ml_deployment.schemas import EmployeeInput
 
@@ -326,7 +326,7 @@ def test_predict_with_an_unknown_key_gives_the_same_401():
 
 
 def test_predict_with_a_revoked_key_gives_the_same_401(client):
-    with Session(get_engine()) as session:
+    with Session(get_admin_engine()) as session:
         key_id = session.scalars(select(ApiKey.id)).one()
         revoke_api_key(session, key_id)
 
@@ -352,7 +352,7 @@ def test_a_bad_key_is_rejected_before_the_body_is_validated():
 
 
 def test_predict_links_the_input_to_the_key_that_made_the_call(client, api_key):
-    with Session(get_engine()) as session:
+    with Session(get_admin_engine()) as session:
         other_id, _ = create_api_key(session, "Other client")
         key_id = session.scalars(
             select(ApiKey.id).where(ApiKey.key_hash == hash_key(api_key))
