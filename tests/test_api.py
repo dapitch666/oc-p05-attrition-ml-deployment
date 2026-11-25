@@ -10,13 +10,14 @@ from unittest.mock import Mock
 import joblib
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from oc_p05_attrition_ml_deployment.api import app
+from oc_p05_attrition_ml_deployment.auth import create_api_key, hash_key, revoke_api_key
 from oc_p05_attrition_ml_deployment.db import get_engine, get_session
-from oc_p05_attrition_ml_deployment.models import ModelInput, ModelOutput
+from oc_p05_attrition_ml_deployment.models import ApiKey, ModelInput, ModelOutput
 from oc_p05_attrition_ml_deployment.schemas import EmployeeInput
 
 MODEL_DIR = Path(__file__).parent.parent / "models"
@@ -50,8 +51,8 @@ VALID_EMPLOYEE = {
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
-    with TestClient(app) as client:
+def client(api_key: str) -> Iterator[TestClient]:
+    with TestClient(app, headers={"X-API-Key": api_key}) as client:
         yield client
 
 
@@ -185,7 +186,7 @@ def break_database(monkeypatch, *, on_flush=False, on_commit=None):
         commits = 0
 
         def flush(self, objects=None):
-            if on_flush:
+            if on_flush and self.new:
                 raise OperationalError("INSERT", {}, Exception("database down"))
             super().flush(objects)
 
@@ -240,10 +241,10 @@ def test_database_failure_on_the_output_gives_503_and_keeps_the_input(client, mo
     assert stored_outputs() == []
 
 
-def test_model_failure_keeps_the_input_without_output(monkeypatch):
+def test_model_failure_keeps_the_input_without_output(monkeypatch, api_key):
     pipeline = Mock()
     pipeline.predict_proba.side_effect = RuntimeError("model failure")
-    with TestClient(app, raise_server_exceptions=False) as client:
+    with TestClient(app, raise_server_exceptions=False, headers={"X-API-Key": api_key}) as client:
         monkeypatch.setattr(app.state, "model", replace(app.state.model, pipeline=pipeline))
         response = client.post("/predict", json=VALID_EMPLOYEE)
 
@@ -270,6 +271,8 @@ def test_failed_write_does_not_log_employee_values(client, monkeypatch, caplog):
 
     class FailingInsertSession(Session):
         def flush(self, objects=None):
+            if not self.new:
+                return
             # A real database error (smallint overflow): its message lists the statement parameters.
             self.connection().execute(
                 insert(ModelInput).values(
@@ -292,3 +295,114 @@ def test_failed_write_does_not_log_employee_values(client, monkeypatch, caplog):
     assert "Could not store the model input" in caplog.text
     for value in ("4321", "Divorcé(e)", "Tech Lead"):
         assert value not in caplog.text
+
+
+def anonymous_client() -> TestClient:
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_health_is_open_without_a_key():
+    with anonymous_client() as client:
+        assert client.get("/health").status_code == 200
+
+
+def test_predict_without_a_key_gives_401_and_stores_nothing():
+    with anonymous_client() as client:
+        response = client.post("/predict", json=VALID_EMPLOYEE)
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid or missing API key."}
+    assert stored_inputs() == []
+
+
+def test_predict_with_an_unknown_key_gives_the_same_401():
+    with anonymous_client() as client:
+        missing = client.post("/predict", json=VALID_EMPLOYEE)
+        unknown = client.post("/predict", json=VALID_EMPLOYEE, headers={"X-API-Key": "nope"})
+
+    assert unknown.status_code == 401
+    assert unknown.json() == missing.json()
+    assert stored_inputs() == []
+
+
+def test_predict_with_a_revoked_key_gives_the_same_401(client):
+    with Session(get_engine()) as session:
+        key_id = session.scalars(select(ApiKey.id)).one()
+        revoke_api_key(session, key_id)
+
+    response = client.post("/predict", json=VALID_EMPLOYEE)
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid or missing API key."}
+    assert stored_inputs() == []
+
+
+def test_401_carries_the_www_authenticate_header():
+    with anonymous_client() as client:
+        response = client.post("/predict", json=VALID_EMPLOYEE)
+
+    assert response.headers["WWW-Authenticate"] == "APIKey"
+
+
+def test_a_bad_key_is_rejected_before_the_body_is_validated():
+    with anonymous_client() as client:
+        response = client.post("/predict", json={**VALID_EMPLOYEE, "age": 17})
+
+    assert response.status_code == 401
+
+
+def test_predict_links_the_input_to_the_key_that_made_the_call(client, api_key):
+    with Session(get_engine()) as session:
+        other_id, _ = create_api_key(session, "Other client")
+        key_id = session.scalars(
+            select(ApiKey.id).where(ApiKey.key_hash == hash_key(api_key))
+        ).one()
+
+    client.post("/predict", json=VALID_EMPLOYEE)
+
+    [stored_input] = stored_inputs()
+    assert stored_input.api_key_id == key_id
+    assert stored_input.api_key_id != other_id
+
+
+def test_only_the_hash_of_the_key_is_stored(api_key):
+    with get_engine().connect() as connection:
+        rows = connection.execute(text("SELECT * FROM api_keys")).fetchall()
+
+    assert [hash_key(api_key) in row for row in rows] == [True]
+    assert all(api_key not in str(value) for row in rows for value in row)
+
+
+def test_database_failure_while_checking_the_key_gives_503(api_key, monkeypatch, caplog):
+    class BrokenLookupSession(Session):
+        def scalar(self, *args, **kwargs):
+            raise OperationalError("SELECT", {}, Exception("database down"))
+
+    def broken_session():
+        with BrokenLookupSession(get_engine()) as session:
+            yield session
+
+    pipeline = Mock()
+    monkeypatch.setattr(app.state, "model", replace(app.state.model, pipeline=pipeline))
+    monkeypatch.setitem(app.dependency_overrides, get_session, broken_session)
+    with caplog.at_level("ERROR"), TestClient(app, headers={"X-API-Key": api_key}) as client:
+        response = client.post("/predict", json=VALID_EMPLOYEE)
+
+    assert response.status_code == 503
+    pipeline.predict_proba.assert_not_called()
+    assert stored_inputs() == []
+    for secret in (api_key, hash_key(api_key)):
+        assert secret not in response.text
+        assert secret not in caplog.text
+
+
+def test_swagger_declares_the_key_scheme_and_the_401_header():
+    schema = app.openapi()
+
+    scheme = next(iter(schema["components"]["securitySchemes"].values()))
+    assert scheme["type"] == "apiKey"
+    assert scheme["name"] == "X-API-Key"
+    assert scheme["in"] == "header"
+    responses = schema["paths"]["/predict"]["post"]["responses"]
+    assert "WWW-Authenticate" in responses["401"]["headers"]
+    assert "503" in responses

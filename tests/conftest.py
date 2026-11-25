@@ -5,9 +5,16 @@ import pandas as pd
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.orm import Session
 
 from oc_p05_attrition_ml_deployment import models  # noqa: F401  # registers the tables
-from oc_p05_attrition_ml_deployment.db import create_database_if_missing, create_tables, get_engine
+from oc_p05_attrition_ml_deployment.auth import create_api_key
+from oc_p05_attrition_ml_deployment.db import (
+    Base,
+    create_database_if_missing,
+    create_tables,
+    get_engine,
+)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -22,6 +29,8 @@ def test_database() -> Iterator[None]:
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv("DATABASE_URL", url)
         get_engine.cache_clear()
+        # Rebuild the tables so that the schema always matches the models.
+        Base.metadata.drop_all(get_engine())
         create_tables(get_engine())
         yield
         get_engine().dispose()
@@ -30,7 +39,9 @@ def test_database() -> Iterator[None]:
 
 def truncate_model_tables() -> None:
     with get_engine().begin() as connection:
-        connection.execute(text("TRUNCATE model_outputs, model_inputs, employees RESTART IDENTITY"))
+        connection.execute(
+            text("TRUNCATE model_outputs, model_inputs, employees, api_keys RESTART IDENTITY")
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -39,6 +50,13 @@ def empty_model_tables(test_database: None) -> Iterator[None]:
     truncate_model_tables()
     yield
     truncate_model_tables()
+
+
+@pytest.fixture
+def api_key() -> str:
+    """A valid key, created in the test database."""
+    with Session(get_engine()) as session:
+        return create_api_key(session, "Test client")[1]
 
 
 @pytest.fixture
