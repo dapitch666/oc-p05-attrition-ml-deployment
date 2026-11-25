@@ -28,8 +28,9 @@ uv run --env-file .env uvicorn oc_p05_attrition_ml_deployment.api:app
 
 The API listens on `http://127.0.0.1:8000`. `GET /health` reports that it runs,
 `POST /predict` takes the raw employee fields and returns the score, the alert flag and
-the model version. The Swagger documentation is served at `/docs`. The tables are created
-at startup, and every call is logged in PostgreSQL.
+the model version. It needs an API key in the `X-API-Key` header. The Swagger
+documentation is served at `/docs`. The tables are created at startup, and every call is
+logged in PostgreSQL.
 
 ## Deployment
 
@@ -58,7 +59,7 @@ To run the published image instead of building it, write a Compose override, for
 ```yaml
 services:
   api:
-    image: ghcr.io/dapitch666/oc-p05-attrition-ml-deployment:0.4.0
+    image: ghcr.io/dapitch666/oc-p05-attrition-ml-deployment:0.5.0
     pull_policy: always
 ```
 
@@ -68,8 +69,44 @@ Then start the stack with the override and without building:
 docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d --no-build api
 ```
 
-The image is public, so no login is needed. Version 0.4.0 was pulled and run this way,
+The image is public, so no login is needed. Version 0.5.0 was pulled and run this way,
 and the `/health` and `/predict` endpoints were checked.
+
+## Authentication and security
+
+`POST /predict` requires an API key in the `X-API-Key` header. `GET /health` stays open.
+A missing, unknown or revoked key gets a 401 with the message `Invalid or missing API key.`
+and a `WWW-Authenticate: APIKey` header. If the database cannot be reached while the key
+is checked, the answer is a 503. In Swagger (`/docs`), the Authorize button takes the key.
+
+Keys are created from the host, with the database port published by Compose, because
+`scripts/` is not in the image. Start the database, then create a key for a client:
+
+```bash
+docker compose up -d db
+uv run --env-file .env python scripts/manage_api_keys.py create "Client name"
+```
+
+The script prints the key id and the key. The key is shown once and cannot be recovered.
+Call the API with it:
+
+```bash
+curl -X POST http://127.0.0.1:8000/predict \
+  -H "X-API-Key: <key>" -H "Content-Type: application/json" \
+  -d '<employee in the format of the Swagger example>'
+```
+
+To revoke a key, run `scripts/manage_api_keys.py revoke <id>`. To find an id, list the keys
+without their hashes:
+
+```sql
+SELECT id, client_name, created_at, revoked_at FROM api_keys;
+```
+
+Only the SHA-256 hash of a key is stored, never the key. Each row of `model_inputs` holds
+the id of the key that made the call (`api_key_id`, empty for calls logged before keys
+existed). Secrets come from the environment: `.env` is not versioned, and `.env.example`
+lists the variables to fill in.
 
 ## Project tree
 
@@ -92,11 +129,13 @@ and the `/health` and `/predict` endpoints were checked.
 ├── pyproject.toml
 ├── scripts/
 │   ├── create_db.py
+│   ├── manage_api_keys.py
 │   ├── prepare_commit_msg.py
 │   └── train_model.py
 ├── src/oc_p05_attrition_ml_deployment/
 │   ├── __init__.py
 │   ├── api.py
+│   ├── auth.py
 │   ├── dataset.py
 │   ├── db.py
 │   ├── features.py
@@ -106,6 +145,7 @@ and the `/health` and `/predict` endpoints were checked.
 ├── tests/
 │   ├── conftest.py
 │   ├── test_api.py
+│   ├── test_auth.py
 │   ├── test_dataset.py
 │   ├── test_db.py
 │   ├── test_features.py

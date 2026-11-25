@@ -40,7 +40,7 @@ def test_tables_exist_after_startup():
 def test_model_input_columns_match_the_employee_fields():
     columns = {column.name for column in ModelInput.__table__.columns}
 
-    assert columns - {"id", "created_at"} == set(EmployeeInput.model_fields)
+    assert columns - {"id", "created_at", "api_key_id"} == set(EmployeeInput.model_fields)
 
 
 def test_input_and_output_round_trip(session):
