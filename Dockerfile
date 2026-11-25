@@ -1,6 +1,6 @@
 FROM python:3.12-slim-bookworm AS builder
 COPY --from=ghcr.io/astral-sh/uv:0.13.1 /uv /usr/local/bin/uv
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
+ENV UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
 
 # Dependencies first, so this layer is cached until uv.lock changes.
@@ -11,6 +11,10 @@ RUN uv sync --locked --no-dev --no-install-project
 # metadata (read for the API version) is installed in the virtual environment.
 COPY src/ src/
 RUN uv sync --locked --no-dev --no-editable
+
+# Bytecode is not compiled and the test suites of third-party packages are dropped: together
+# they weigh about 290 MB in the image and are not needed to serve predictions.
+RUN find .venv -type d -name tests -prune -exec rm -rf {} +
 
 FROM python:3.12-slim-bookworm
 RUN useradd --uid 1000 --create-home app

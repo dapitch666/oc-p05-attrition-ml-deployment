@@ -39,6 +39,11 @@ are installed in a virtual environment, then copied with the model into a slim P
 image that runs as a non-root user. `.dockerignore` lists the few files allowed in the
 build context, so `data/` and `.env` never enter the image.
 
+The image was slimmed from 1.14 GB to 765 MB: bytecode is not compiled at build time, the
+test suites of third-party packages are removed, and `pyarrow`, which only the host scripts
+need to read the dataset, moved to the development dependencies. CatBoost's native library
+(264 MB) is the largest remaining part.
+
 To run the API and PostgreSQL together in containers:
 
 ```bash

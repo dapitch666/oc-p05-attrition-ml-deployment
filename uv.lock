@@ -765,14 +765,13 @@ wheels = [
 
 [[package]]
 name = "oc-p05-attrition-ml-deployment"
-version = "0.5.0"
+version = "0.5.1"
 source = { editable = "." }
 dependencies = [
     { name = "catboost" },
     { name = "fastapi" },
     { name = "pandas" },
     { name = "psycopg", extra = ["binary"] },
-    { name = "pyarrow" },
     { name = "scikit-learn" },
     { name = "sqlalchemy" },
     { name = "uvicorn" },
@@ -782,6 +781,7 @@ dependencies = [
 dev = [
     { name = "httpx2" },
     { name = "pre-commit" },
+    { name = "pyarrow" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -793,7 +793,6 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.165.0" },
     { name = "pandas", specifier = ">=3.1.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.9" },
-    { name = "pyarrow", specifier = ">=26.0.1" },
     { name = "scikit-learn", specifier = ">=1.9.1" },
     { name = "sqlalchemy", specifier = ">=2.1.9" },
     { name = "uvicorn", specifier = ">=0.54.0" },
@@ -803,6 +802,7 @@ requires-dist = [
 dev = [
     { name = "httpx2", specifier = ">=2.16.2" },
     { name = "pre-commit", specifier = ">=4.7.0" },
+    { name = "pyarrow", specifier = ">=26.0.1" },
     { name = "pytest", specifier = ">=9.2.0" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "ruff", specifier = ">=0.17.5" },
