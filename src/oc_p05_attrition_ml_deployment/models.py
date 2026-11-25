@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, SmallInteger, func
+from sqlalchemy import DateTime, ForeignKey, SmallInteger, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from oc_p05_attrition_ml_deployment.db import Base
@@ -35,6 +35,18 @@ class EmployeeFields:
     domaine_etude: Mapped[str]
 
 
+class ApiKey(Base):
+    """A client key: only its SHA-256 hash is stored, never the key."""
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_name: Mapped[str]
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class ModelInput(EmployeeFields, Base):
     """One call to the model: the raw employee fields received."""
 
@@ -42,6 +54,8 @@ class ModelInput(EmployeeFields, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Nullable: the rows logged before API keys existed have no key.
+    api_key_id: Mapped[int | None] = mapped_column(ForeignKey("api_keys.id"))
     output: Mapped["ModelOutput | None"] = relationship(back_populates="input")
 
 
