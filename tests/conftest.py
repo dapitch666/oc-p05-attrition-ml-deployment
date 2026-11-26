@@ -48,6 +48,12 @@ def test_database() -> Iterator[None]:
         get_admin_engine.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def app_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Set APP_ENV for every test: the API refuses to start without it."""
+    monkeypatch.setenv("APP_ENV", "test")
+
+
 def truncate_model_tables() -> None:
     with get_admin_engine().begin() as connection:
         connection.execute(

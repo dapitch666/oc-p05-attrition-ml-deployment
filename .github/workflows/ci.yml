@@ -1,16 +1,20 @@
 name: CI
 
 # Runs on every push to any branch. The required checks on `main` gate the PR merge.
+# The publish workflow also calls it before publishing the image.
 on:
   push:
     branches: ["**"]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # In a called run github.workflow is the caller's name: such a run gets its own group,
+  # so neither a push nor another run can cancel it.
+  group: ci-${{ github.workflow == 'CI' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -46,14 +50,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      TEST_DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/attrition_test
-      APP_DB_PASSWORD: test
+      TEST_DATABASE_URL: postgresql+psycopg://test:${{ secrets.TEST_POSTGRES_PASSWORD }}@localhost:5432/attrition_test
+      APP_DB_PASSWORD: ${{ secrets.TEST_APP_DB_PASSWORD }}
     services:
       postgres:
         image: postgres:18
         env:
           POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
+          POSTGRES_PASSWORD: ${{ secrets.TEST_POSTGRES_PASSWORD }}
           POSTGRES_DB: attrition_test
         ports:
           - 5432:5432

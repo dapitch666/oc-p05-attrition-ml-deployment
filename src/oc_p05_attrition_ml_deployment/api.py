@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, get_args
 
 import joblib
 import pandas as pd
@@ -21,7 +21,12 @@ from oc_p05_attrition_ml_deployment.auth import find_active_key_id
 from oc_p05_attrition_ml_deployment.db import get_engine, get_session, missing_tables
 from oc_p05_attrition_ml_deployment.features import build_inputs
 from oc_p05_attrition_ml_deployment.models import ModelInput, ModelOutput
-from oc_p05_attrition_ml_deployment.schemas import EmployeeInput, HealthOutput, PredictionOutput
+from oc_p05_attrition_ml_deployment.schemas import (
+    EmployeeInput,
+    Environment,
+    HealthOutput,
+    PredictionOutput,
+)
 
 DEFAULT_MODEL_DIR = "models/"
 PIPELINE_FILE = "attrition_pipeline.joblib"
@@ -65,9 +70,19 @@ def load_model(model_dir: Path) -> LoadedModel:
     )
 
 
+def read_environment() -> Environment:
+    """Return APP_ENV; raise RuntimeError when it is missing or unknown."""
+    value = os.environ.get("APP_ENV")
+    allowed = get_args(Environment)
+    if value not in allowed:
+        raise RuntimeError(f"APP_ENV must be one of: {', '.join(allowed)}.")
+    return value
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    """Load the model and check the tables once, before the first request."""
+    """Check the environment, load the model and check the tables before the first request."""
+    app.state.environment = read_environment()
     app.state.model = load_model(Path(os.environ.get("MODEL_DIR", DEFAULT_MODEL_DIR)))
     missing = missing_tables(get_engine())
     if missing:
@@ -89,9 +104,9 @@ app = FastAPI(
 
 
 @app.get("/health")
-def health() -> HealthOutput:
-    """Report that the API is running and which version it is."""
-    return HealthOutput(status="ok", version=APP_VERSION)
+def health(request: Request) -> HealthOutput:
+    """Report that the API is running, which version it is and in which environment."""
+    return HealthOutput(status="ok", version=APP_VERSION, environment=request.app.state.environment)
 
 
 def authenticate(

@@ -61,13 +61,14 @@ curl -X POST http://127.0.0.1:8000/predict \
 
 The variables of `.env`, read by `docker-compose.yml`:
 
-- `APP_ENV`: name of the environment, for example `prod` or `dev`.
+- `APP_ENV`: required, `dev`, `test` or `prod`. The API refuses to start otherwise.
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`: the PostgreSQL owner account and the
   database created at the first start. `init` and the key commands use this account.
 - `APP_DB_PASSWORD`: password of the `attrition_app` role, which `init` creates or updates.
   The API connects with this role.
 - `API_BIND`: interface the API port is published on. The default is `127.0.0.1`. Set it to
   `0.0.0.0` to reach the API from the network, for example on a NAS.
+- `API_PORT`: host port of the API. The default is `8000`.
 
 The passwords are inserted into connection URLs: they must not contain `@`, `/` or `:`.
 `docker-compose.yml` stops with a message when a required variable is missing.
@@ -77,11 +78,11 @@ The passwords are inserted into connection URLs: they must not contain `@`, `/` 
 
 ## API
 
-`GET /health` is open. It returns the status and the version of the application, read from the
-package metadata:
+`GET /health` is open. It returns the status, the version of the application, read from the
+package metadata, and the environment, read from `APP_ENV`:
 
 ```json
-{"status": "ok", "version": "0.6.0"}
+{"status": "ok", "version": "0.6.0", "environment": "prod"}
 ```
 
 `POST /predict` needs the key in the `X-API-Key` header. The body is the raw employee fields,
@@ -279,10 +280,11 @@ the `init` and `api` services both use it. Edit it at each release. It must matc
 `pyproject.toml`: the `lint` job of the CI fails when they differ. Set the version with
 `uv version X.Y.Z`, which updates `pyproject.toml` and `uv.lock`.
 
-To release, push a tag `vX.Y.Z` on a commit of `main`. The `publish` workflow then builds the
-image for `linux/amd64` and publishes `ghcr.io/dapitch666/oc-p05-attrition-ml-deployment:X.Y.Z`.
-It fails when the tag differs from the version in `pyproject.toml` or when the tagged commit is
-not on `main`. Run manually, it builds the image without pushing.
+To release, push a tag `vX.Y.Z` on a commit of `main`. The `publish` workflow runs the CI, and
+if it passes, builds the image for `linux/amd64` and publishes
+`ghcr.io/dapitch666/oc-p05-attrition-ml-deployment:X.Y.Z`. It fails when the tag differs from the
+version in `pyproject.toml` or when the tagged commit is not on `main`. Run manually, it runs the
+CI and builds the image without pushing.
 
 The `docker` job of the CI builds the image on every push, without publishing it.
 
@@ -337,13 +339,17 @@ Set `APP_DB_PASSWORD` too. The test setup exits when it is missing. The role is 
 database of the same PostgreSQL server, so use the value of `APP_DB_PASSWORD` in `.env`, or the
 test run changes the password the API uses.
 
+The CI reads the PostgreSQL passwords of its test job from two repository secrets,
+`TEST_POSTGRES_PASSWORD` (database owner) and `TEST_APP_DB_PASSWORD` (application role). Create
+both before the workflow runs. The password rule of the Configuration section applies to them.
+
 ```bash
 uv run --env-file .env pytest --cov=oc_p05_attrition_ml_deployment
 uv run ruff check .
 uv run ruff format --check .
 ```
 
-At the last run, 127 tests passed with a coverage of 98%. They cover the model and the features,
+At the last run, 133 tests passed with a coverage of 98%. They cover the model and the features,
 the API (valid and invalid input, missing or revoked key, database failure), the key commands,
 the role rights and the refusal to start with a missing table. The fixtures are small hand-made
 data, never real HR data.

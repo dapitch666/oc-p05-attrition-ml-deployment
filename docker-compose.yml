@@ -36,7 +36,7 @@ services:
       APP_ENV: ${APP_ENV:?set APP_ENV in .env}
       DATABASE_URL: postgresql+psycopg://attrition_app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}@db:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}
     ports:
-      - "${API_BIND:-127.0.0.1}:8000:8000"
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"
     depends_on:
       init:
         condition: service_completed_successfully

@@ -1,6 +1,7 @@
 name: Publish
 
-# A version tag publishes the image. workflow_dispatch builds it without pushing (dry run).
+# A version tag publishes the image once the CI passes. workflow_dispatch builds it without
+# pushing (dry run).
 on:
   push:
     tags: ["v*"]
@@ -13,8 +14,14 @@ env:
   IMAGE: ghcr.io/dapitch666/oc-p05-attrition-ml-deployment
 
 jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
   publish:
     name: Build and publish the image
+    needs: ci
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
