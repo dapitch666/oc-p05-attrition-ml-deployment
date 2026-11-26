@@ -2,6 +2,9 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+# Defined here rather than in api.py, which imports this module.
+Environment = Literal["dev", "test", "prod"]
+
 
 class EmployeeInput(BaseModel):
     """Raw employee fields, as collected by HR. Engineered features are computed server side."""
@@ -150,4 +153,8 @@ class HealthOutput(BaseModel):
     status: str = Field(description="Always 'ok' while the API is running.", examples=["ok"])
     version: str = Field(
         description="Version of the application, from the package metadata.", examples=["0.6.0"]
+    )
+    environment: Environment = Field(
+        description="Environment the API runs in, read from APP_ENV at startup.",
+        examples=["prod"],
     )

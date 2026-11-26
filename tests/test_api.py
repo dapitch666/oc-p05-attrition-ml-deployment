@@ -62,11 +62,36 @@ def test_api_version_comes_from_package_metadata(client):
     assert client.get("/openapi.json").json()["info"]["version"] == expected
 
 
-def test_health_returns_ok(client):
-    response = client.get("/health")
+@pytest.mark.parametrize("environment", ["dev", "test", "prod"])
+def test_health_returns_status_version_and_environment(monkeypatch, environment):
+    monkeypatch.setenv("APP_ENV", environment)
+
+    with TestClient(app) as client:
+        response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "version": version("oc-p05-attrition-ml-deployment")}
+    assert response.json() == {
+        "status": "ok",
+        "version": version("oc-p05-attrition-ml-deployment"),
+        "environment": environment,
+    }
+
+
+def test_startup_fails_when_app_env_is_missing(monkeypatch):
+    monkeypatch.delenv("APP_ENV")
+
+    with pytest.raises(RuntimeError, match="APP_ENV must be one of: dev, test, prod"):
+        with TestClient(app):
+            pass
+
+
+@pytest.mark.parametrize("value", ["", "staging", "PROD"])
+def test_startup_fails_when_app_env_is_unknown(monkeypatch, value):
+    monkeypatch.setenv("APP_ENV", value)
+
+    with pytest.raises(RuntimeError, match="APP_ENV must be one of: dev, test, prod"):
+        with TestClient(app):
+            pass
 
 
 def test_health_fields_are_documented(client):
@@ -75,6 +100,8 @@ def test_health_fields_are_documented(client):
     properties = schemas["HealthOutput"]["properties"]
     assert properties["status"]["description"]
     assert properties["version"]["description"]
+    assert properties["environment"]["description"]
+    assert properties["environment"]["enum"] == ["dev", "test", "prod"]
 
 
 def test_predict_returns_score_alert_and_version(client):
