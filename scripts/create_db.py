@@ -1,4 +1,4 @@
-"""Create the database and tables, then import the project 4 dataset into employees."""
+"""Create the database, tables and application role, then import the project 4 dataset."""
 
 import argparse
 import os
@@ -9,7 +9,11 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from oc_p05_attrition_ml_deployment.dataset import DatasetError, import_employees
-from oc_p05_attrition_ml_deployment.db import create_database_if_missing, create_tables, get_engine
+from oc_p05_attrition_ml_deployment.db import (
+    create_database_if_missing,
+    get_admin_engine,
+    init_database,
+)
 
 DEFAULT_DATASET = Path("data/employees_cleaned.parquet")
 
@@ -19,12 +23,15 @@ def main() -> int:
     parser.add_argument("--data", type=Path, default=DEFAULT_DATASET, help="Parquet dataset.")
     args = parser.parse_args()
 
-    url = os.environ.get("DATABASE_URL")
+    url = os.environ.get("DATABASE_ADMIN_URL")
+    password = os.environ.get("APP_DB_PASSWORD")
     if not url:
-        parser.error("DATABASE_URL is not set.")
+        parser.error("DATABASE_ADMIN_URL is not set.")
+    if not password:
+        parser.error("APP_DB_PASSWORD is not set.")
     create_database_if_missing(url)
-    engine = get_engine()
-    create_tables(engine)
+    engine = get_admin_engine()
+    init_database(engine, password)
 
     frame = pd.read_parquet(args.data)
     try:

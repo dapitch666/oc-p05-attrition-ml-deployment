@@ -24,6 +24,20 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked
+      - name: Check that the image tag in docker-compose.yml matches the version
+        run: |
+          python3 - <<'PY'
+          import re
+          import sys
+          import tomllib
+
+          with open("pyproject.toml", "rb") as file:
+              version = tomllib.load(file)["project"]["version"]
+          with open("docker-compose.yml") as file:
+              tags = re.findall(r"ghcr\.io/dapitch666/oc-p05-attrition-ml-deployment:(\S+)", file.read())
+          if tags != [version]:
+              sys.exit(f"docker-compose.yml pins {tags}, pyproject.toml is at {version}.")
+          PY
       - run: uv run ruff check .
       - run: uv run ruff format --check .
 
