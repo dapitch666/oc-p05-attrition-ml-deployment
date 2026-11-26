@@ -142,3 +142,12 @@ class PredictionOutput(BaseModel):
         "SHA-256 of the pipeline file.",
         examples=["1.0.0-3fa9c2d1"],
     )
+
+
+class HealthOutput(BaseModel):
+    """State of the API."""
+
+    status: str = Field(description="Always 'ok' while the API is running.", examples=["ok"])
+    version: str = Field(
+        description="Version of the application, from the package metadata.", examples=["0.6.0"]
+    )

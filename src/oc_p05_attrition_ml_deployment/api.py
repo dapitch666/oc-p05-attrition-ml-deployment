@@ -21,7 +21,7 @@ from oc_p05_attrition_ml_deployment.auth import find_active_key_id
 from oc_p05_attrition_ml_deployment.db import get_engine, get_session, missing_tables
 from oc_p05_attrition_ml_deployment.features import build_inputs
 from oc_p05_attrition_ml_deployment.models import ModelInput, ModelOutput
-from oc_p05_attrition_ml_deployment.schemas import EmployeeInput, PredictionOutput
+from oc_p05_attrition_ml_deployment.schemas import EmployeeInput, HealthOutput, PredictionOutput
 
 DEFAULT_MODEL_DIR = "models/"
 PIPELINE_FILE = "attrition_pipeline.joblib"
@@ -78,18 +78,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     yield
 
 
+APP_VERSION = version("oc-p05-attrition-ml-deployment")
+
 app = FastAPI(
     title="Futurisys attrition API",
     description="API serving the employee attrition classifier.",
-    version=version("oc-p05-attrition-ml-deployment"),
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    """Report that the API is running."""
-    return {"status": "ok"}
+def health() -> HealthOutput:
+    """Report that the API is running and which version it is."""
+    return HealthOutput(status="ok", version=APP_VERSION)
 
 
 def authenticate(

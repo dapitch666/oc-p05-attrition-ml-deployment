@@ -66,7 +66,15 @@ def test_health_returns_ok(client):
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "ok", "version": version("oc-p05-attrition-ml-deployment")}
+
+
+def test_health_fields_are_documented(client):
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+
+    properties = schemas["HealthOutput"]["properties"]
+    assert properties["status"]["description"]
+    assert properties["version"]["description"]
 
 
 def test_predict_returns_score_alert_and_version(client):
