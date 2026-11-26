@@ -10,10 +10,12 @@ from sqlalchemy.orm import Session
 from oc_p05_attrition_ml_deployment import models  # noqa: F401  # registers the tables
 from oc_p05_attrition_ml_deployment.auth import create_api_key
 from oc_p05_attrition_ml_deployment.db import (
+    APP_ROLE,
     Base,
     create_database_if_missing,
-    create_tables,
+    get_admin_engine,
     get_engine,
+    init_database,
 )
 
 
@@ -25,20 +27,29 @@ def test_database() -> Iterator[None]:
         pytest.exit("TEST_DATABASE_URL is not set.", returncode=2)
     if not (make_url(url).database or "").endswith("_test"):
         pytest.exit("The database name in TEST_DATABASE_URL must end with _test.", returncode=2)
+    # The role is shared by every database of the server: its password is never hard-coded.
+    app_password = os.environ.get("APP_DB_PASSWORD")
+    if not app_password:
+        pytest.exit("APP_DB_PASSWORD is not set.", returncode=2)
     create_database_if_missing(url)
+    app_url = make_url(url).set(username=APP_ROLE, password=app_password)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setenv("DATABASE_URL", url)
+        patch.setenv("DATABASE_ADMIN_URL", url)
+        patch.setenv("DATABASE_URL", app_url.render_as_string(hide_password=False))
+        get_admin_engine.cache_clear()
         get_engine.cache_clear()
         # Rebuild the tables so that the schema always matches the models.
-        Base.metadata.drop_all(get_engine())
-        create_tables(get_engine())
+        Base.metadata.drop_all(get_admin_engine())
+        init_database(get_admin_engine(), app_password)
         yield
         get_engine().dispose()
+        get_admin_engine().dispose()
         get_engine.cache_clear()
+        get_admin_engine.cache_clear()
 
 
 def truncate_model_tables() -> None:
-    with get_engine().begin() as connection:
+    with get_admin_engine().begin() as connection:
         connection.execute(
             text("TRUNCATE model_outputs, model_inputs, employees, api_keys RESTART IDENTITY")
         )
@@ -55,7 +66,7 @@ def empty_model_tables(test_database: None) -> Iterator[None]:
 @pytest.fixture
 def api_key() -> str:
     """A valid key, created in the test database."""
-    with Session(get_engine()) as session:
+    with Session(get_admin_engine()) as session:
         return create_api_key(session, "Test client")[1]
 
 

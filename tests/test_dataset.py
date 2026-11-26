@@ -11,7 +11,7 @@ from oc_p05_attrition_ml_deployment.dataset import (
     build_employees,
     import_employees,
 )
-from oc_p05_attrition_ml_deployment.db import get_engine
+from oc_p05_attrition_ml_deployment.db import get_admin_engine
 from oc_p05_attrition_ml_deployment.features import TARGET
 from oc_p05_attrition_ml_deployment.models import Employee
 from oc_p05_attrition_ml_deployment.schemas import EmployeeInput
@@ -19,7 +19,7 @@ from oc_p05_attrition_ml_deployment.schemas import EmployeeInput
 
 @pytest.fixture
 def session() -> Iterator[Session]:
-    with Session(get_engine()) as session:
+    with Session(get_admin_engine()) as session:
         yield session
 
 

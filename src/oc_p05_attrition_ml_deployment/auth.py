@@ -47,3 +47,13 @@ def revoke_api_key(session: Session, key_id: int) -> bool:
     )
     session.commit()
     return result.rowcount == 1
+
+
+def has_api_keys(session: Session) -> bool:
+    """Return True when at least one key exists, revoked or not."""
+    return session.scalar(select(ApiKey.id).limit(1)) is not None
+
+
+def list_api_keys(session: Session) -> list[ApiKey]:
+    """Return every key, ordered by id."""
+    return list(session.scalars(select(ApiKey).order_by(ApiKey.id)))

@@ -1,0 +1,14 @@
+# Local development: build the image instead of pulling the pinned tag, and publish the database.
+# Run with: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
+services:
+  db:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  init:
+    build: .
+    pull_policy: never
+
+  api:
+    build: .
+    pull_policy: never
