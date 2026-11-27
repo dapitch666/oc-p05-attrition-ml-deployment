@@ -1,5 +1,5 @@
 # Edit the tag here at each release; it must match the version in pyproject.toml.
-x-image: &image ghcr.io/dapitch666/oc-p05-attrition-ml-deployment:0.7.0
+x-image: &image ghcr.io/dapitch666/oc-p05-attrition-ml-deployment:0.8.0
 
 services:
   db:
