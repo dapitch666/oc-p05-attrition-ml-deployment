@@ -1,7 +1,7 @@
 name: Publish
 
-# A version tag publishes the image once the CI passes. workflow_dispatch builds it without
-# pushing (dry run).
+# Pushing a version tag publishes the image once the CI passes, then redeploys test, and prod
+# after approval. workflow_dispatch builds the image without pushing or deploying (dry run).
 on:
   push:
     tags: ["v*"]
@@ -32,7 +32,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Check that the tag matches the version in pyproject.toml
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         run: |
           python3 - <<'PY'
           import os
@@ -46,13 +46,13 @@ jobs:
               sys.exit(f"Tag {tag} does not match pyproject.toml version {version}.")
           PY
       - name: Check that the tagged commit is on main
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         run: |
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
             || { echo "The tagged commit is not an ancestor of main."; exit 1; }
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -67,6 +67,69 @@ jobs:
         with:
           context: .
           platforms: linux/amd64
-          push: ${{ github.ref_type == 'tag' }}
+          push: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  deploy-test:
+    name: Deploy to test
+    needs: publish
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: test
+    permissions:
+      contents: read
+    concurrency:
+      group: deploy-test
+      cancel-in-progress: false
+    steps:
+      - name: Call the Portainer webhook
+        env:
+          HOOK_TOKEN: ${{ secrets.HOOK_TOKEN }}
+          PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
+        run: |
+          curl --fail-with-body --max-time 60 -X POST \
+            -H "X-Hook-Token: $HOOK_TOKEN" "$PORTAINER_WEBHOOK_URL"
+
+  deploy-prod:
+    name: Deploy to prod
+    needs: deploy-test
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: prod
+    permissions:
+      contents: read
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    steps:
+      - name: Call the Portainer webhook
+        env:
+          HOOK_TOKEN: ${{ secrets.HOOK_TOKEN }}
+          PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
+        run: |
+          curl --fail-with-body --max-time 60 -X POST \
+            -H "X-Hook-Token: $HOOK_TOKEN" "$PORTAINER_WEBHOOK_URL"
+      - name: Smoke test
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          response=""
+          deadline=$((SECONDS + 300))
+          while (( SECONDS < deadline )); do
+            if response=$(curl --fail-with-body --silent --show-error --max-time 10 \
+                "$APP_URL/health" 2>&1) &&
+              jq -e --arg version "$expected" \
+                '.status == "ok" and .environment == "prod" and .version == $version' \
+                <<<"$response" >/dev/null 2>&1; then
+              echo "Prod runs version $expected."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Prod did not report status ok, environment prod and version $expected within 5 minutes."
+          echo "Last response: $response"
+          exit 1
