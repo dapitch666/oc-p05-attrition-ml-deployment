@@ -1,6 +1,8 @@
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import DateTime, ForeignKey, SmallInteger, String, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from oc_p05_attrition_ml_deployment.db import Base
@@ -71,6 +73,21 @@ class ModelOutput(Base):
     model_version: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     input: Mapped[ModelInput] = relationship(back_populates="output")
+
+
+class ApiError(Base):
+    """A refused call, answered with a 401 or a 422; it holds nothing the client typed."""
+
+    __tablename__ = "api_errors"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    method: Mapped[str]
+    path: Mapped[str]
+    status_code: Mapped[int] = mapped_column(SmallInteger)
+    # Nullable: a 401 has no key, and neither has a 422 raised before the key is checked.
+    api_key_id: Mapped[int | None] = mapped_column(ForeignKey("api_keys.id"))
+    detail: Mapped[Any] = mapped_column(JSONB)
 
 
 class Employee(EmployeeFields, Base):

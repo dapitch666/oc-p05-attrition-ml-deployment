@@ -1,5 +1,5 @@
 # Edit the tag here at each release; it must match the version in pyproject.toml.
-x-image: &image ghcr.io/dapitch666/oc-p05-attrition-ml-deployment:0.8.0
+x-image: &image ghcr.io/dapitch666/oc-p05-attrition-ml-deployment:0.9.0
 
 services:
   db:
@@ -11,15 +11,15 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}" ]
       interval: 5s
       timeout: 3s
       retries: 10
 
   init:
     image: *image
-    entrypoint: ["python", "-m", "oc_p05_attrition_ml_deployment.cli"]
-    command: ["init"]
+    entrypoint: [ "python", "-m", "oc_p05_attrition_ml_deployment.cli" ]
+    command: [ "init" ]
     environment:
       DATABASE_ADMIN_URL: postgresql+psycopg://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}

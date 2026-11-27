@@ -14,10 +14,11 @@ from sqlalchemy import insert, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from oc_p05_attrition_ml_deployment import api
 from oc_p05_attrition_ml_deployment.api import app
 from oc_p05_attrition_ml_deployment.auth import create_api_key, hash_key, revoke_api_key
 from oc_p05_attrition_ml_deployment.db import get_admin_engine, get_engine, get_session
-from oc_p05_attrition_ml_deployment.models import ApiKey, ModelInput, ModelOutput
+from oc_p05_attrition_ml_deployment.models import ApiError, ApiKey, ModelInput, ModelOutput
 from oc_p05_attrition_ml_deployment.schemas import EmployeeInput
 
 MODEL_DIR = Path(__file__).parent.parent / "models"
@@ -288,7 +289,7 @@ def test_model_failure_keeps_the_input_without_output(monkeypatch, api_key):
     assert stored_outputs() == []
 
 
-def test_invalid_request_stores_nothing(client):
+def test_invalid_request_stores_no_model_row(client):
     response = client.post("/predict", json={**VALID_EMPLOYEE, "age": 17})
 
     assert response.status_code == 422
@@ -441,3 +442,184 @@ def test_swagger_declares_the_key_scheme_and_the_401_header():
     responses = schema["paths"]["/predict"]["post"]["responses"]
     assert "WWW-Authenticate" in responses["401"]["headers"]
     assert "503" in responses
+
+
+def stored_errors() -> list[ApiError]:
+    with Session(get_engine()) as session:
+        return list(session.scalars(select(ApiError)))
+
+
+def stored_error_rows() -> str:
+    """The whole rows as PostgreSQL holds them, to search them for forbidden content."""
+    with get_engine().connect() as connection:
+        rows = connection.execute(text("SELECT row_to_json(api_errors)::text FROM api_errors"))
+        return "\n".join(rows.scalars())
+
+
+def assert_one_401_row(reason: str, key: str | None) -> None:
+    [error] = stored_errors()
+    assert (error.method, error.path, error.status_code) == ("POST", "/predict", 401)
+    assert error.api_key_id is None
+    assert error.detail == {"reason": reason}
+    assert error.created_at is not None
+    if key:
+        row = stored_error_rows()
+        assert key not in row
+        assert hash_key(key) not in row
+
+
+def test_401_without_a_key_is_logged():
+    with anonymous_client() as client:
+        client.post("/predict", json=VALID_EMPLOYEE)
+
+    assert_one_401_row("missing", None)
+
+
+def test_401_with_an_unknown_key_is_logged_without_the_key():
+    key = "distinctive-unknown-key"
+    with anonymous_client() as client:
+        client.post("/predict", json=VALID_EMPLOYEE, headers={"X-API-Key": key})
+
+    assert_one_401_row("invalid", key)
+
+
+def test_401_with_a_revoked_key_is_logged_without_the_key(client, api_key):
+    with Session(get_admin_engine()) as session:
+        revoke_api_key(session, session.scalars(select(ApiKey.id)).one())
+
+    client.post("/predict", json=VALID_EMPLOYEE)
+
+    assert_one_401_row("invalid", api_key)
+
+
+def test_422_is_logged_with_the_key_and_without_the_submitted_values(client):
+    payload = {**VALID_EMPLOYEE, "age": 7777, "poste": "Distinctive job"}
+
+    response = client.post("/predict", json=payload)
+
+    assert response.status_code == 422
+    [error] = stored_errors()
+    assert (error.method, error.path, error.status_code) == ("POST", "/predict", 422)
+    with Session(get_engine()) as session:
+        assert error.api_key_id == session.scalars(select(ApiKey.id)).one()
+    assert [item["loc"] for item in error.detail] == [["body", "age"], ["body", "poste"]]
+    assert all(set(item) == {"loc", "type", "msg"} for item in error.detail)
+    row = stored_error_rows()
+    assert "7777" not in json.dumps(error.detail)
+    assert "Distinctive job" not in row
+
+
+def test_422_response_is_the_default_one(client):
+    response = client.post("/predict", json={**VALID_EMPLOYEE, "age": 17})
+
+    assert response.json() == {
+        "detail": [
+            {
+                "type": "greater_than_equal",
+                "loc": ["body", "age"],
+                "msg": "Input should be greater than or equal to 18",
+                "input": 17,
+                "ctx": {"ge": 18},
+            }
+        ]
+    }
+
+
+def test_name_of_an_unknown_field_is_not_stored(client):
+    response = client.post("/predict", json={**VALID_EMPLOYEE, "Distinctive name": 1})
+
+    assert response.json()["detail"][0]["loc"] == ["body", "Distinctive name"]
+    [error] = stored_errors()
+    assert [item["loc"] for item in error.detail] == [["body", "<extra>"]]
+    assert "Distinctive name" not in stored_error_rows()
+
+
+def test_failed_years_check_is_logged_without_the_values(client):
+    payload = {**VALID_EMPLOYEE, "annees_experience_totale": 41, "annees_dans_l_entreprise": 43}
+
+    client.post("/predict", json=payload)
+
+    [error] = stored_errors()
+    detail = json.dumps(error.detail)
+    assert "cannot exceed" in detail
+    assert "41" not in detail and "43" not in detail
+
+
+def test_invalid_body_without_a_key_is_logged_as_a_401_only():
+    with anonymous_client() as client:
+        response = client.post("/predict", json={**VALID_EMPLOYEE, "age": 17})
+
+    assert response.status_code == 401
+    assert_one_401_row("missing", None)
+
+
+@pytest.mark.parametrize("with_key", [True, False])
+def test_malformed_json_is_refused_before_the_key_is_checked(api_key, with_key):
+    headers = {"Content-Type": "application/json"}
+    if with_key:
+        headers["X-API-Key"] = api_key
+
+    with anonymous_client() as client:
+        response = client.post("/predict", content='{"poste": "Distinctive', headers=headers)
+
+    assert response.status_code == 422
+    [error] = stored_errors()
+    assert error.status_code == 422
+    assert error.api_key_id is None
+    assert [item["type"] for item in error.detail] == ["json_invalid"]
+    assert "Distinctive" not in stored_error_rows()
+
+
+@pytest.mark.parametrize(
+    ("headers", "reason"), [({}, "missing"), ({"X-API-Key": "nope"}, "invalid")]
+)
+def test_failure_to_log_a_401_does_not_change_the_response(monkeypatch, caplog, headers, reason):
+    break_database(monkeypatch, on_commit=1)
+
+    with caplog.at_level("ERROR"), anonymous_client() as client:
+        response = client.post("/predict", json=VALID_EMPLOYEE, headers=headers)
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid or missing API key."}
+    assert response.headers["WWW-Authenticate"] == "APIKey"
+    assert "Could not store the API error" in caplog.text
+    assert stored_errors() == []
+
+
+def test_failure_to_log_a_422_does_not_change_the_response(client, monkeypatch, caplog):
+    payload = {**VALID_EMPLOYEE, "age": 17}
+    expected = client.post("/predict", json=payload)
+    with get_admin_engine().begin() as connection:
+        connection.execute(text("TRUNCATE api_errors"))
+
+    class BrokenSession(Session):
+        def commit(self):
+            raise OperationalError("INSERT", {}, Exception("database down"))
+
+    def broken_session():
+        with BrokenSession(get_engine()) as session:
+            yield session
+
+    # The handler calls get_session itself, so a dependency override would not reach it.
+    monkeypatch.setattr(api, "get_session", broken_session)
+    with caplog.at_level("ERROR"):
+        response = client.post("/predict", json=payload)
+
+    assert response.status_code == 422
+    assert response.json() == expected.json()
+    assert "Could not store the API error" in caplog.text
+    assert stored_errors() == []
+
+
+def test_successful_prediction_logs_no_error(client):
+    assert client.post("/predict", json=VALID_EMPLOYEE).status_code == 200
+
+    assert stored_errors() == []
+
+
+def test_503_is_not_logged_as_an_api_error(client, monkeypatch):
+    break_database(monkeypatch, on_commit=1)
+
+    assert client.post("/predict", json=VALID_EMPLOYEE).status_code == 503
+
+    assert stored_errors() == []

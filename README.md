@@ -13,10 +13,10 @@ Stack: Python 3.12, uv, FastAPI, SQLAlchemy, PostgreSQL, pytest, Docker Compose,
 The deployment needs Docker, the `docker-compose.yml` of a release and a `.env` file next to it.
 The repository itself is not needed.
 
-Download the Compose file of the release, here `v0.8.0`:
+Download the Compose file of the release, here `v0.9.0`:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/dapitch666/oc-p05-attrition-ml-deployment/v0.8.0/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/dapitch666/oc-p05-attrition-ml-deployment/v0.9.0/docker-compose.yml
 ```
 
 Create a `.env` file in the same folder:
@@ -82,7 +82,7 @@ The passwords are inserted into connection URLs: they must not contain `@`, `/` 
 package metadata, and the environment, read from `APP_ENV`:
 
 ```json
-{"status": "ok", "version": "0.8.0", "environment": "prod"}
+{"status": "ok", "version": "0.9.0", "environment": "prod"}
 ```
 
 `POST /predict` needs the key in the `X-API-Key` header. The body is the raw employee fields,
@@ -127,6 +127,10 @@ Invalid fields get a 422. A missing, unknown or revoked key gets a 401 with the 
 reached, the answer is a 503 and no prediction is returned. The Swagger documentation is served
 at `/docs`, where the Authorize button takes the key.
 
+The 401 and 422 responses are logged in the `api_errors` table. The key is checked before the
+fields are validated, so an invalid body sent without a valid key gets a 401. A body that is not
+valid JSON is refused before the key is checked: it gets a 422, with or without a key.
+
 ## API keys
 
 The first key is created by `init` and printed in `docker compose logs init`. `init` creates it
@@ -150,12 +154,23 @@ account and do not need an API key.
 
 - API keys are random, 32 bytes long. Only the SHA-256 hash is stored. The key is shown once.
 - Each row of `model_inputs` holds the id of the key that made the call.
+- Each 401 and 422 adds a row to `api_errors` with the date, the method, the path, the status,
+  the key id when known, and a detail.
+  - For a 401, the detail is the reason: `missing`, or `invalid` for an unknown or revoked key.
+    The response is the same in both cases.
+  - For a 422, the detail lists the location, type and message of each error. The name of an
+    unknown field is replaced by `<extra>`. The key id is empty when the body is not valid JSON.
+- Neither the keys sent, even hashed, nor the submitted values are stored in `api_errors`:
+  nothing the client typed in the headers or the body is kept there.
+- A failure to log an error is written to the application log and does not change the
+  response. The 503 responses are not logged in the database.
 - The API connects as `attrition_app`. The role has `SELECT` on `api_keys`, `SELECT` and `INSERT`
-  on `model_inputs` and `model_outputs` (`SELECT` is needed by `INSERT ... RETURNING`), and
-  `USAGE` on the sequences of these two tables. It also has `CONNECT` on the database and
-  `USAGE` on the schema `public`. It has nothing else: no `UPDATE`, no `DELETE`, no `CREATE`,
-  and no access to `employees`. A flaw in the API therefore cannot modify or delete the rows
-  already stored, logs and keys included. It could still add rows.
+  on `model_inputs`, `model_outputs` and `api_errors` (`SELECT` is needed by
+  `INSERT ... RETURNING`), and `USAGE` on the sequences of these three tables. It also has
+  `CONNECT` on the database and `USAGE` on the schema `public`. It has nothing else: no
+  `UPDATE`, no `DELETE`, no `CREATE`, and no access to `employees`. A flaw in the API therefore
+  cannot modify or delete the rows already stored, logs and keys included. It could still add
+  rows.
 - The owner account is used only by `init` and by the key commands.
 - `init` revokes every right of the role on the tables before it grants the list above, so
   running it again also removes a right granted by mistake.
@@ -163,13 +178,17 @@ account and do not need an API key.
   that points to the `init` step when one is missing.
 - Secrets come from the environment. `.env` is not versioned, and `data/` is git-ignored.
 - `GET /health` exposes the application version without authentication.
+- The API has no rate limiting and every 401 and 422 writes a row, so a flood of bad keys or
+  malformed requests grows `api_errors`. Rate limiting and a purge of old rows are left as
+  improvements.
 
 The `model_inputs` table holds sensitive HR fields in clear: gender, marital status, income,
 age and others. It holds no employee identifier, but the combination of fields can still single
 out a person, so treat the table as personal data under the GDPR. The purpose is to keep a trace
-of the model calls. Send only the fields the model needs, as the API requires. The retention
-period and the access to the database are left to the operator, who must set them and purge the
-tables accordingly. The code does not delete anything.
+of the model calls. Send only the fields the model needs, as the API requires. The `api_errors`
+table holds no HR value, and the same retention rule covers it. The retention period and the
+access to the database are left to the operator, who must set them and purge the tables
+accordingly. The code does not delete anything.
 
 ## Database schema
 
@@ -177,6 +196,7 @@ tables accordingly. The code does not delete anything.
 erDiagram
     api_keys ||--o{ model_inputs : "api_key_id"
     model_inputs ||--o| model_outputs : "input_id"
+    api_keys |o--o{ api_errors : "api_key_id"
 
     api_keys {
         integer id PK
@@ -222,6 +242,15 @@ erDiagram
         string model_version
         timestamptz created_at
     }
+    api_errors {
+        integer id PK
+        timestamptz created_at
+        string method
+        string path
+        smallint status_code
+        integer api_key_id FK
+        jsonb detail
+    }
     employees {
         integer id_employee PK
         string departement
@@ -262,6 +291,8 @@ show the following:
 - `api_key_id` is empty for the calls logged before API keys existed.
 - `input_id` is unique. An input can exist without an output when the call failed after the
   input was stored.
+- `api_errors` holds one row per 401 or 422. Its `api_key_id` is empty for a 401, and for a 422
+  raised before the key was checked.
 - `employees` is the project 4 dataset. The API does not use it, the application role cannot
   read it, and only `scripts/create_db.py` fills it. `id_employee` is not generated.
 
@@ -385,10 +416,10 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
-At the last run, 133 tests passed with a coverage of 98%. They cover the model and the features,
-the API (valid and invalid input, missing or revoked key, database failure), the key commands,
-the role rights and the refusal to start with a missing table. The fixtures are small hand-made
-data, never real HR data.
+At the last run, 152 tests passed with a coverage of 98%. They cover the model and the features,
+the API (valid and invalid input, missing or revoked key, database failure, error logging), the
+key commands, the role rights and the refusal to start with a missing table. The fixtures are
+small hand-made data, never real HR data.
 
 The CI (`.github/workflows/ci.yml`) runs on every push with a PostgreSQL 18 service. The `lint`
 job runs `ruff check`, `ruff format --check` and the image tag check. The `test` job runs pytest

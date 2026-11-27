@@ -89,6 +89,17 @@ def test_role_can_insert_and_read_inputs_and_outputs():
         assert connection.execute(text("SELECT count(*) FROM model_outputs")).scalar() == 1
 
 
+def test_role_can_insert_and_read_api_errors():
+    with get_engine().begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO api_errors (method, path, status_code, detail) "
+                "VALUES ('POST', '/predict', 401, '{}')"
+            )
+        )
+        assert connection.execute(text("SELECT count(*) FROM api_errors")).scalar() == 1
+
+
 def test_role_can_read_api_keys(api_key):
     with get_engine().connect() as connection:
         assert connection.execute(text("SELECT count(*) FROM api_keys")).scalar() == 1
@@ -101,6 +112,9 @@ def test_role_can_read_api_keys(api_key):
         "UPDATE model_inputs SET age = 30",
         "TRUNCATE model_inputs",
         "DROP TABLE model_outputs",
+        "DELETE FROM api_errors",
+        "UPDATE api_errors SET status_code = 200",
+        "TRUNCATE api_errors",
         "DELETE FROM api_keys",
         "UPDATE api_keys SET client_name = 'x'",
         "INSERT INTO api_keys (client_name, key_hash) VALUES ('x', 'y')",

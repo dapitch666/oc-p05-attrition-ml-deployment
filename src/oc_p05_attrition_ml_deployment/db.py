@@ -1,5 +1,5 @@
 import os
-from collections.abc import Iterator
+from collections.abc import Generator
 from functools import lru_cache
 
 from psycopg import Cursor, sql
@@ -9,9 +9,9 @@ from sqlalchemy.orm import DeclarativeBase, Session
 
 CONNECT_TIMEOUT_SECONDS = 3
 APP_ROLE = "attrition_app"
-REQUIRED_TABLES = ("api_keys", "model_inputs", "model_outputs")
+REQUIRED_TABLES = ("api_keys", "model_inputs", "model_outputs", "api_errors")
 # Tables the application role may write; api_keys is read only, the other tables are closed to it.
-APP_INSERT_TABLES = ("model_inputs", "model_outputs")
+APP_INSERT_TABLES = ("model_inputs", "model_outputs", "api_errors")
 
 
 class Base(DeclarativeBase):
@@ -118,7 +118,7 @@ def missing_tables(engine: Engine) -> list[str]:
     return [name for name in REQUIRED_TABLES if name not in present]
 
 
-def get_session() -> Iterator[Session]:
+def get_session() -> Generator[Session]:
     """Yield a session for one request, then close it."""
     with Session(get_engine()) as session:
         yield session
