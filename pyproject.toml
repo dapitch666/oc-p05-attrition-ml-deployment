@@ -1,6 +1,6 @@
 [project]
 name = "oc-p05-attrition-ml-deployment"
-version = "0.7.0"
+version = "0.8.0"
 description = "Deploy an employee attrition model (CatBoost) behind a FastAPI API with PostgreSQL, Docker Compose and CI/CD"
 readme = "README.md"
 authors = [

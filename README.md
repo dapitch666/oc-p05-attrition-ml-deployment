@@ -283,10 +283,43 @@ the `init` and `api` services both use it. Edit it at each release. It must matc
 To release, push a tag `vX.Y.Z` on a commit of `main`. The `publish` workflow runs the CI, and
 if it passes, builds the image for `linux/amd64` and publishes
 `ghcr.io/dapitch666/oc-p05-attrition-ml-deployment:X.Y.Z`. It fails when the tag differs from the
-version in `pyproject.toml` or when the tagged commit is not on `main`. Run manually, it runs the
-CI and builds the image without pushing.
+version in `pyproject.toml` or when the tagged commit is not on `main`. It then redeploys the
+test stack, waits for the approval of the prod deployment, redeploys the prod stack and runs the
+smoke test (see Environments). Run manually, even on a tag, it runs the CI and builds the image
+without pushing or deploying.
 
 The `docker` job of the CI builds the image on every push, without publishing it.
+
+## Environments
+
+- `dev` runs on the development machine, with the local build of `docker-compose.dev.yml`
+  (see Development).
+- `test` runs on a NAS as a Portainer stack that follows `main`.
+- `prod` runs on a NAS as a second Portainer stack that follows `main`.
+
+Each stack sets `APP_ENV` to its environment, which `GET /health` reports. The `publish` workflow
+redeploys a NAS stack by calling its Portainer webhook through a proxy: `deploy-test` once the
+image is published, then `deploy-prod` after a reviewer approves it.
+
+Create two GitHub environments, `test` and `prod`, and add a required reviewer to `prod`. Each
+holds its own values:
+
+- Secret `PORTAINER_WEBHOOK_URL`: the webhook of the stack, as reached through the proxy.
+- Secret `HOOK_TOKEN`: the token the workflow sends in the `X-Hook-Token` header.
+- Variable `APP_URL` (`prod` only): the base URL of the API, without a trailing slash.
+
+After the prod webhook call, the smoke test requests `$APP_URL/health` every 10 seconds for up
+to 5 minutes. It passes when `status` is `ok`, `environment` is `prod` and `version` is the tag
+without its leading `v`. Otherwise the job fails and prints the last response. The test stack has
+no smoke test: its URL is restricted to the local network, which the GitHub runner cannot reach.
+
+Limits:
+
+- A prod redeploy installs the version that `main` pins at approval time, not necessarily the
+  tagged one. The smoke test compares the running version with the tag and fails when they
+  differ. Reject a pending approval once a newer release has replaced it.
+- When prod already runs the tagged version, for example on a rerun of the workflow, the smoke
+  test passes without proving that the redeployment happened.
 
 ## Development
 
@@ -367,7 +400,7 @@ last two as the `coverage-report` artifact. The `docker` job builds the image.
 ├── .env.example                  variables of .env, with example values
 ├── .github/workflows/
 │   ├── ci.yml                    lint, tests with coverage, Docker build
-│   └── publish.yml               publishes the image when a v* tag is pushed
+│   └── publish.yml               publishes and deploys when a v* tag is pushed
 ├── .gitignore
 ├── .pre-commit-config.yaml       ruff hooks and the commit message hook
 ├── .python-version
