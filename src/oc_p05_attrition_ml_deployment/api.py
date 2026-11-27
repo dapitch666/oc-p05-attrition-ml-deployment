@@ -3,15 +3,19 @@ import json
 import logging
 import os
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
-from typing import Annotated, get_args
+from typing import Annotated, Any, get_args
 
 import joblib
 import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException, Request, Security
+from fastapi.concurrency import run_in_threadpool
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 from sklearn.pipeline import Pipeline
 from sqlalchemy.exc import SQLAlchemyError
@@ -20,7 +24,7 @@ from sqlalchemy.orm import Session
 from oc_p05_attrition_ml_deployment.auth import find_active_key_id
 from oc_p05_attrition_ml_deployment.db import get_engine, get_session, missing_tables
 from oc_p05_attrition_ml_deployment.features import build_inputs
-from oc_p05_attrition_ml_deployment.models import ModelInput, ModelOutput
+from oc_p05_attrition_ml_deployment.models import ApiError, ModelInput, ModelOutput
 from oc_p05_attrition_ml_deployment.schemas import (
     EmployeeInput,
     Environment,
@@ -109,7 +113,51 @@ def health(request: Request) -> HealthOutput:
     return HealthOutput(status="ok", version=APP_VERSION, environment=request.app.state.environment)
 
 
+def store_error(
+    session: Session, request: Request, status_code: int, detail: dict[str, Any] | list[Any]
+) -> None:
+    """Commit one refused call; a database failure is logged and never raised."""
+    try:
+        session.add(
+            ApiError(
+                method=request.method,
+                path=request.url.path,
+                status_code=status_code,
+                api_key_id=getattr(request.state, "api_key_id", None),
+                detail=detail,
+            )
+        )
+        session.commit()
+    except SQLAlchemyError:
+        session.rollback()
+        logger.exception("Could not store the API error")
+
+
+def record_validation_error(request: Request, errors: list[dict[str, Any]]) -> None:
+    """Store a 422 in its own session, without anything the client typed."""
+    detail = [
+        {
+            # The location of an unknown field is its name, which the client chose.
+            "loc": ["body", "<extra>"] if error["type"] == "extra_forbidden" else error["loc"],
+            "type": error["type"],
+            "msg": error["msg"],
+        }
+        for error in errors
+    ]
+    with contextmanager(get_session)() as session:
+        store_error(session, request, 422, detail)
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
+    """Log the invalid request, then answer as FastAPI does by default."""
+    # In a thread, so that a slow database does not block the event loop.
+    await run_in_threadpool(record_validation_error, request, error.errors())
+    return await request_validation_exception_handler(request, error)
+
+
 def authenticate(
+    request: Request,
     key: Annotated[str | None, Security(api_key_header)],
     session: Annotated[Session, Depends(get_session)],
 ) -> int:
@@ -119,6 +167,7 @@ def authenticate(
         status_code=401, detail=INVALID_API_KEY, headers={"WWW-Authenticate": "APIKey"}
     )
     if not key:
+        store_error(session, request, 401, {"reason": "missing"})
         raise unauthorized
     try:
         key_id = find_active_key_id(session, key)
@@ -126,7 +175,9 @@ def authenticate(
         logger.exception("Could not check the API key")
         raise HTTPException(status_code=503, detail=DATABASE_UNAVAILABLE) from error
     if key_id is None:
+        store_error(session, request, 401, {"reason": "invalid"})
         raise unauthorized
+    request.state.api_key_id = key_id
     return key_id
 
 

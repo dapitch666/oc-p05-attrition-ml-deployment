@@ -57,7 +57,10 @@ def app_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 def truncate_model_tables() -> None:
     with get_admin_engine().begin() as connection:
         connection.execute(
-            text("TRUNCATE model_outputs, model_inputs, employees, api_keys RESTART IDENTITY")
+            text(
+                "TRUNCATE api_errors, model_outputs, model_inputs, employees, api_keys "
+                "RESTART IDENTITY"
+            )
         )
 
 
