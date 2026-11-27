@@ -13,10 +13,10 @@ Stack: Python 3.12, uv, FastAPI, SQLAlchemy, PostgreSQL, pytest, Docker Compose,
 The deployment needs Docker, the `docker-compose.yml` of a release and a `.env` file next to it.
 The repository itself is not needed.
 
-Download the Compose file of the release, here `v0.7.0`:
+Download the Compose file of the release, here `v0.8.0`:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/dapitch666/oc-p05-attrition-ml-deployment/v0.7.0/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/dapitch666/oc-p05-attrition-ml-deployment/v0.8.0/docker-compose.yml
 ```
 
 Create a `.env` file in the same folder:
@@ -82,7 +82,7 @@ The passwords are inserted into connection URLs: they must not contain `@`, `/` 
 package metadata, and the environment, read from `APP_ENV`:
 
 ```json
-{"status": "ok", "version": "0.7.0", "environment": "prod"}
+{"status": "ok", "version": "0.8.0", "environment": "prod"}
 ```
 
 `POST /predict` needs the key in the `X-API-Key` header. The body is the raw employee fields,
@@ -290,6 +290,9 @@ without pushing or deploying.
 
 The `docker` job of the CI builds the image on every push, without publishing it.
 
+To make a release step by step, with the checks and the rollback procedure, follow
+`RELEASE.md`.
+
 ## Environments
 
 - `dev` runs on the development machine, with the local build of `docker-compose.dev.yml`
@@ -406,6 +409,7 @@ last two as the `coverage-report` artifact. The `docker` job builds the image.
 ├── .python-version
 ├── Dockerfile                    two-stage image build with uv
 ├── README.md
+├── RELEASE.md                    release checklist and rollback procedure
 ├── docker-compose.dev.yml        local build and published PostgreSQL port
 ├── docker-compose.yml            the deployment: db, init and api services
 ├── models/
