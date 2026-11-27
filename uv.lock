@@ -765,7 +765,7 @@ wheels = [
 
 [[package]]
 name = "oc-p05-attrition-ml-deployment"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "." }
 dependencies = [
     { name = "catboost" },

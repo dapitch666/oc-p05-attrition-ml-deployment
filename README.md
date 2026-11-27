@@ -13,10 +13,10 @@ Stack: Python 3.12, uv, FastAPI, SQLAlchemy, PostgreSQL, pytest, Docker Compose,
 The deployment needs Docker, the `docker-compose.yml` of a release and a `.env` file next to it.
 The repository itself is not needed.
 
-Download the Compose file of the release, here `v0.8.0`:
+Download the Compose file of the release, here `v0.9.0`:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/dapitch666/oc-p05-attrition-ml-deployment/v0.8.0/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/dapitch666/oc-p05-attrition-ml-deployment/v0.9.0/docker-compose.yml
 ```
 
 Create a `.env` file in the same folder:
@@ -82,7 +82,7 @@ The passwords are inserted into connection URLs: they must not contain `@`, `/` 
 package metadata, and the environment, read from `APP_ENV`:
 
 ```json
-{"status": "ok", "version": "0.8.0", "environment": "prod"}
+{"status": "ok", "version": "0.9.0", "environment": "prod"}
 ```
 
 `POST /predict` needs the key in the `X-API-Key` header. The body is the raw employee fields,
